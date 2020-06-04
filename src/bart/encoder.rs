@@ -14,7 +14,7 @@
 use crate::bart::attention::SelfAttention;
 use tch::{nn, Tensor};
 use crate::common::dropout::Dropout;
-use crate::bart::BartConfig;
+use crate::bart::{BartConfig, LayerState};
 use crate::bart::bart::Activation;
 use crate::common::activations::{_gelu, _relu, _swish, _gelu_new, _tanh};
 use crate::bart::embeddings::{EmbeddingOption, LearnedPositionalEmbedding, SinusoidalPositionalEmbedding};
@@ -44,7 +44,6 @@ impl EncoderLayer {
                                                 config.encoder_attention_heads,
                                                 config.attention_dropout,
                                                 false,
-                                                false,
                                                 output_attention);
         let self_attention_layer_norm = nn::layer_norm(&p / "self_attn_layer_norm",
                                                        vec![config.d_model],
@@ -72,8 +71,12 @@ impl EncoderLayer {
         EncoderLayer { self_attention, self_attention_layer_norm, dropout, activation_dropout, activation, fc1, fc2, final_layer_norm }
     }
 
-    pub fn forward_t(&mut self, x: &Tensor, encoder_padding_mask: Option<&Tensor>, train: bool) -> (Tensor, Option<Tensor>) {
-        let (output, attention_weights) = self.self_attention.forward_t(x, None, encoder_padding_mask, None, train);
+    pub fn forward_t(&self,
+                     x: &Tensor,
+                     encoder_padding_mask: Option<&Tensor>,
+                     layer_state: Option<LayerState>,
+                     train: bool) -> (Tensor, Option<Tensor>, Option<LayerState>) {
+        let (output, attention_weights, new_layer_state) = self.self_attention.forward_t(x, None, encoder_padding_mask, None, layer_state, train);
         let output: Tensor = output.apply_t(&self.dropout, train) + x;
         let output = output.apply(&self.self_attention_layer_norm);
 
@@ -84,7 +87,7 @@ impl EncoderLayer {
             .apply(&self.fc2)
             .apply_t(&self.dropout, train);
         let output: Tensor = output + residual;
-        (output.apply(&self.final_layer_norm), attention_weights)
+        (output.apply(&self.final_layer_norm), attention_weights, new_layer_state)
     }
 }
 
@@ -165,7 +168,7 @@ impl BartEncoder {
         }
     }
 
-    pub fn forward_t(&mut self,
+    pub fn forward_t(&self,
                      input_ids: &Tensor,
                      attention_mask: Option<&Tensor>,
                      embeddings: &nn::Embedding,
@@ -188,7 +191,7 @@ impl BartEncoder {
 
         let mut hidden_state = x.copy();
         let mut attention_weights: Option<Tensor>;
-        let mut layers = self.layers.iter_mut();
+        let mut layers = self.layers.iter();
 
         loop {
             match layers.next() {
@@ -197,7 +200,7 @@ impl BartEncoder {
                         hidden_states.push(hidden_state.as_ref().copy().transpose(0, 1));
                     };
 
-                    let temp = layer.forward_t(&hidden_state, attention_mask.as_ref(), train);
+                    let temp = layer.forward_t(&hidden_state, attention_mask.as_ref(), None, train);
                     hidden_state = temp.0;
                     attention_weights = temp.1;
                     if let Some(attentions) = all_attentions.borrow_mut() {

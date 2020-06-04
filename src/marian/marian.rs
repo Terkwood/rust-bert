@@ -14,7 +14,7 @@
 use crate::bart::{BartModel, BartConfig};
 use tch::{Tensor, nn};
 use std::borrow::BorrowMut;
-use crate::pipelines::generation::MutableLMHeadModel;
+use crate::pipelines::generation::LMHeadModel;
 use tch::nn::Init;
 
 /// # Marian Pretrained model weight files
@@ -260,7 +260,7 @@ impl MarianForConditionalGeneration {
     }
 }
 
-impl MutableLMHeadModel for MarianForConditionalGeneration {
+impl LMHeadModel for MarianForConditionalGeneration {
     /// Forward pass through the model
     ///
     /// # Arguments
@@ -325,16 +325,19 @@ impl MutableLMHeadModel for MarianForConditionalGeneration {
     ///
     /// ```
     ///
-    fn forward_t(&mut self,
+    fn forward_t(&self,
                  input_ids: &Option<Tensor>,
-                 _layer_past: &Option<Vec<Tensor>>,
+                 _layer_past: (Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>),
                  attention_mask: &Option<Tensor>,
                  _token_type_ids: &Option<Tensor>,
                  _position_ids: &Option<Tensor>,
                  _input_embeds: &Option<Tensor>,
                  encoder_outputs: Option<&Tensor>,
                  decoder_input_ids: &Option<Tensor>,
-                 train: bool) -> Result<(Tensor, Option<Tensor>, Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>), &'static str> {
+                 train: bool) -> Result<(Tensor,
+                                         Option<Tensor>,
+                                         (Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>),
+                                         Option<Vec<Tensor>>, Option<Vec<Tensor>>), &'static str> {
         let (decoder_output, encoder_hidden_states, _, _, _, _, _) = self.base_model.forward_t(input_ids.as_ref(),
                                                                                                attention_mask.as_ref(),
                                                                                                decoder_input_ids.as_ref(),

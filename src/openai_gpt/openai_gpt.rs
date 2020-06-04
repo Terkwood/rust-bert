@@ -327,7 +327,7 @@ impl LMHeadModel for OpenAIGPTLMHeadModel {
     ///  let (output, _, _, hidden_states, attentions) = no_grad(|| {
     ///    gpt_model
     ///         .forward_t(&Some(input_tensor),
-    ///                    &None,
+    ///                    (None, None, None),
     ///                    &Some(attention_mask),
     ///                    &Some(token_type_ids),
     ///                    &Some(position_ids),
@@ -341,14 +341,14 @@ impl LMHeadModel for OpenAIGPTLMHeadModel {
     ///
     fn forward_t(&self,
                  input_ids: &Option<Tensor>,
-                 _layer_past: &Option<Vec<Tensor>>,
+                 _layer_past: (Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>),
                  attention_mask: &Option<Tensor>,
                  token_type_ids: &Option<Tensor>,
                  position_ids: &Option<Tensor>,
                  input_embeds: &Option<Tensor>,
                  _encoder_outputs: Option<&Tensor>,
                  _decoder_input_ids: &Option<Tensor>,
-                 train: bool) -> Result<(Tensor, Option<Tensor>, Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>), &'static str> {
+                 train: bool) -> Result<(Tensor, Option<Tensor>, (Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>), Option<Vec<Tensor>>, Option<Vec<Tensor>>), &'static str> {
         let (output,
             all_hidden_states,
             all_attentions) = self.transformer.forward_t(input_ids,
@@ -359,6 +359,6 @@ impl LMHeadModel for OpenAIGPTLMHeadModel {
                                                          train)?;
 
         let lm_logits = output.apply(&self.lm_head);
-        Ok((lm_logits, None, None, all_hidden_states, all_attentions))
+        Ok((lm_logits, None, (None, None, None), all_hidden_states, all_attentions))
     }
 }

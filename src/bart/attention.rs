@@ -27,25 +27,25 @@ pub struct LayerState {
     pub prev_key_padding_mask: Option<Tensor>,
 }
 
-impl LayerState {
-    pub(crate) fn reorder_cache(&mut self, new_indices: &Tensor) {
-        if self.prev_key.is_some() {
-            self.prev_key = Some(self.prev_key.as_ref().unwrap().index_select(0, new_indices));
-        }
-        if self.prev_value.is_some() {
-            self.prev_value = Some(self.prev_value.as_ref().unwrap().index_select(0, new_indices));
-        }
-        if self.prev_key_padding_mask.is_some() {
-            self.prev_key_padding_mask = Some(self.prev_key_padding_mask.as_ref().unwrap().index_select(0, new_indices));
-        }
-    }
-
-    pub(crate) fn reset_cache(&mut self) {
-        self.prev_key = None;
-        self.prev_value = None;
-        self.prev_key_padding_mask = None;
-    }
-}
+// impl LayerState {
+//     pub(crate) fn reorder_cache(&mut self, new_indices: &Tensor) {
+//         if self.prev_key.is_some() {
+//             self.prev_key = Some(self.prev_key.as_ref().unwrap().index_select(0, new_indices));
+//         }
+//         if self.prev_value.is_some() {
+//             self.prev_value = Some(self.prev_value.as_ref().unwrap().index_select(0, new_indices));
+//         }
+//         if self.prev_key_padding_mask.is_some() {
+//             self.prev_key_padding_mask = Some(self.prev_key_padding_mask.as_ref().unwrap().index_select(0, new_indices));
+//         }
+//     }
+//
+//     pub(crate) fn reset_cache(&mut self) {
+//         self.prev_key = None;
+//         self.prev_value = None;
+//         self.prev_key_padding_mask = None;
+//     }
+// }
 
 
 #[derive(Debug)]
@@ -56,7 +56,6 @@ pub struct SelfAttention {
     scaling: f64,
     encoder_decoder_attention: bool,
     output_attentions: bool,
-    pub(crate) prev_state: Option<LayerState>,
     k_proj: nn::Linear,
     v_proj: nn::Linear,
     q_proj: nn::Linear,
@@ -65,7 +64,7 @@ pub struct SelfAttention {
 
 impl SelfAttention {
     pub fn new(p: nn::Path, embed_dim: i64, num_heads: i64, dropout: f64,
-               encoder_decoder_attention: bool, store_cache: bool, output_attentions: bool) -> SelfAttention {
+               encoder_decoder_attention: bool, output_attentions: bool) -> SelfAttention {
         let k_proj = nn::linear(&p / "k_proj", embed_dim, embed_dim, Default::default());
         let v_proj = nn::linear(&p / "v_proj", embed_dim, embed_dim, Default::default());
         let q_proj = nn::linear(&p / "q_proj", embed_dim, embed_dim, Default::default());
@@ -74,11 +73,6 @@ impl SelfAttention {
         let head_dim = embed_dim / num_heads;
         let scaling = (head_dim as f64).powf(-0.5);
         let dropout = Dropout::new(dropout);
-        let prev_state = if store_cache {
-            Some(LayerState { prev_key: None, prev_value: None, prev_key_padding_mask: None })
-        } else {
-            None
-        };
 
         SelfAttention {
             num_heads,
@@ -87,7 +81,6 @@ impl SelfAttention {
             scaling,
             encoder_decoder_attention,
             output_attentions,
-            prev_state,
             k_proj,
             v_proj,
             q_proj,
@@ -99,15 +92,17 @@ impl SelfAttention {
         x.contiguous().view((dim_0, bs * self.num_heads, self.head_dim)).transpose(0, 1)
     }
 
-    pub fn forward_t(&mut self, query: &Tensor,
+    pub fn forward_t(&self,
+                     query: &Tensor,
                      key: Option<&Tensor>,
                      key_padding_mask: Option<&Tensor>,
                      attention_mask: Option<&Tensor>,
-                     train: bool) -> (Tensor, Option<Tensor>) {
+                     layer_state: Option<LayerState>,
+                     train: bool) -> (Tensor, Option<Tensor>, Option<LayerState>) {
         let query_size = query.size();
         let (target_sequence_length, bs) = (query_size[0], query_size[1]);
         let q: Tensor = self.flatten(query.as_ref().apply(&self.q_proj) * self.scaling, target_sequence_length, bs);
-        let key = match &self.prev_state {
+        let key = match &layer_state {
             Some(prev_state) => {
                 if prev_state.prev_key.is_some() & self.encoder_decoder_attention {
                     None
@@ -133,9 +128,9 @@ impl SelfAttention {
             )
         };
 
-        let (k, v, key_padding_mask) = self.use_saved_state(k, v, key_padding_mask, bs);
+        let (k, v, key_padding_mask) = self.use_saved_state(k, v, key_padding_mask, bs, layer_state);
 
-        self.prev_state = match &self.prev_state {
+        let new_layer_state = match &layer_state {
             Some(_) => Some(LayerState {
                 prev_key: Some(k.view((bs, self.num_heads, -1, self.head_dim))),
                 prev_value: Some(v.view((bs, self.num_heads, -1, self.head_dim))),
@@ -179,12 +174,17 @@ impl SelfAttention {
             Some(attention_weights.view((bs, self.num_heads, target_sequence_length, source_sequence_length)))
         } else { None };
 
-        (output, attention_weights)
+        (output, attention_weights, new_layer_state)
     }
 
-    fn use_saved_state(&self, k: Option<Tensor>, v: Option<Tensor>, key_padding_mask: Option<&Tensor>, bs: i64)
+    fn use_saved_state(&self,
+                       k: Option<Tensor>,
+                       v: Option<Tensor>,
+                       key_padding_mask: Option<&Tensor>,
+                       bs: i64,
+                       prev_state: Option<LayerState>)
                        -> (Tensor, Tensor, Option<Tensor>) {
-        match &self.prev_state {
+        match prev_state {
             Some(prev_state) => {
                 let k = match &prev_state.prev_key {
                     Some(prev_key) => {
@@ -224,7 +224,9 @@ impl SelfAttention {
         }
     }
 
-    fn use_saved_key_padding_mask(&self, key_padding_mask: Option<&Tensor>, prev_key_padding_mask: &Option<Tensor>,
+    fn use_saved_key_padding_mask(&self,
+                                  key_padding_mask: Option<&Tensor>,
+                                  prev_key_padding_mask: &Option<Tensor>,
                                   bs: i64, sequence_length: i64) -> Option<Tensor> {
         if prev_key_padding_mask.is_some() {
             if self.encoder_decoder_attention {

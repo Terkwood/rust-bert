@@ -447,19 +447,19 @@ impl LMHeadModel for GPT2LMHeadModel {
     ///
     fn forward_t(&self,
                  input_ids: &Option<Tensor>,
-                 layer_past: &Option<Vec<Tensor>>,
+                 layer_past: (Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>),
                  attention_mask: &Option<Tensor>,
                  token_type_ids: &Option<Tensor>,
                  position_ids: &Option<Tensor>,
                  input_embeds: &Option<Tensor>,
                  _encoder_outputs: Option<&Tensor>,
                  _decoder_input_ids: &Option<Tensor>,
-                 train: bool) -> Result<(Tensor, Option<Tensor>, Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>), &'static str> {
+                 train: bool) -> Result<(Tensor, Option<Tensor>, (Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>), Option<Vec<Tensor>>, Option<Vec<Tensor>>), &'static str> {
         let (output,
             past,
             all_hidden_states,
             all_attentions) = self.transformer.forward_t(input_ids,
-                                                         layer_past,
+                                                         &layer_past.2,
                                                          attention_mask,
                                                          token_type_ids,
                                                          position_ids,
@@ -467,6 +467,6 @@ impl LMHeadModel for GPT2LMHeadModel {
                                                          train)?;
 
         let lm_logits = output.apply(&self.lm_head);
-        Ok((lm_logits, None, past, all_hidden_states, all_attentions))
+        Ok((lm_logits, None, (None, None, past), all_hidden_states, all_attentions))
     }
 }

@@ -22,7 +22,7 @@ use tch::nn::{embedding, EmbeddingConfig};
 use crate::bart::attention::LayerState;
 use std::borrow::BorrowMut;
 use crate::common::dropout::Dropout;
-use crate::pipelines::generation::MutableLMHeadModel;
+use crate::pipelines::generation::LMHeadModel;
 
 /// # BART Pretrained model weight files
 pub struct BartModelResources;
@@ -282,7 +282,7 @@ impl BartModel {
     ///
     /// ```
     ///
-    pub fn forward_t(&mut self,
+    pub fn forward_t(&self,
                      input_ids: Option<&Tensor>,
                      attention_mask: Option<&Tensor>,
                      decoder_input_ids: Option<&Tensor>,
@@ -325,13 +325,13 @@ impl BartModel {
          all_encoder_hidden_states, all_encoder_attentions)
     }
 
-    /// Resets the decoder cached keys and values. Should be run for every new generation using the model.
-    pub fn reset_cache(&mut self) {
-        for layer in self.get_decoder().get_layers() {
-            layer.get_self_attention().prev_state.as_mut().unwrap().reset_cache();
-            layer.get_encoder_attention().prev_state.as_mut().unwrap().reset_cache();
-        };
-    }
+    // /// Resets the decoder cached keys and values. Should be run for every new generation using the model.
+    // pub fn reset_cache(&mut self) {
+    //     for layer in self.get_decoder().get_layers() {
+    //         layer.get_self_attention().prev_state.as_mut().unwrap().reset_cache();
+    //         layer.get_encoder_attention().prev_state.as_mut().unwrap().reset_cache();
+    //     };
+    // }
 }
 
 /// # BART Model for conditional generation
@@ -428,7 +428,7 @@ impl BartForConditionalGeneration {
     ///
     /// ```
     ///
-    pub fn forward_t(&mut self,
+    pub fn forward_t(&self,
                      input_ids: Option<&Tensor>,
                      attention_mask: Option<&Tensor>,
                      encoder_outputs: Option<(Tensor, Option<Vec<Tensor>>, Option<Vec<Tensor>>)>,
@@ -442,7 +442,7 @@ impl BartForConditionalGeneration {
         let (decoder_outputs, encoder_hidden_states, _,
             all_decoder_hidden_states, all_decoder_attentions,
             all_encoder_hidden_states, all_encoder_attentions) =
-            self.borrow_mut().base_model.forward_t(input_ids, attention_mask, decoder_input_ids, encoder_outputs, decoder_attention_mask, train);
+            self.base_model.forward_t(input_ids, attention_mask, decoder_input_ids, encoder_outputs, decoder_attention_mask, train);
 
         let lm_logits = decoder_outputs.linear::<Tensor>(&self.base_model.embeddings.ws, None);
         (lm_logits, encoder_hidden_states,
@@ -459,7 +459,8 @@ impl BartForConditionalGeneration {
 
     /// Resets the decoder cached keys and values. Should be run for every new generation using the model.
     pub fn reset_cache(&mut self) {
-        self.get_base_model().reset_cache()
+        //ToDo: update
+        // self.get_base_model().reset_cache()
     }
 }
 
@@ -621,11 +622,12 @@ impl BartForSequenceClassification {
 
     /// Resets the decoder cached keys and values. Should be run for every new generation using the model.
     pub fn reset_cache(&mut self) {
-        self.get_base_model().reset_cache()
+        //ToDo: update
+        // self.get_base_model().reset_cache()
     }
 }
 
-impl MutableLMHeadModel for BartForConditionalGeneration {
+impl LMHeadModel for BartForConditionalGeneration {
     /// Forward pass through the model
     ///
     /// # Arguments
@@ -690,16 +692,20 @@ impl MutableLMHeadModel for BartForConditionalGeneration {
     ///
     /// ```
     ///
-    fn forward_t(&mut self,
+    fn forward_t(&self,
                  input_ids: &Option<Tensor>,
-                 _layer_past: &Option<Vec<Tensor>>,
+                 _layer_past: (Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>),
                  attention_mask: &Option<Tensor>,
                  _token_type_ids: &Option<Tensor>,
                  _position_ids: &Option<Tensor>,
                  _input_embeds: &Option<Tensor>,
                  encoder_outputs: Option<&Tensor>,
                  decoder_input_ids: &Option<Tensor>,
-                 train: bool) -> Result<(Tensor, Option<Tensor>, Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>), &'static str> {
+                 train: bool) -> Result<(Tensor,
+                                         Option<Tensor>,
+                                         (Option<Vec<Tensor>>, Option<Vec<Tensor>>, Option<Vec<Tensor>>),
+                                         Option<Vec<Tensor>>,
+                                         Option<Vec<Tensor>>), &'static str> {
         let (decoder_output, encoder_hidden_states, _, _, _, _, _) = self.base_model.forward_t(input_ids.as_ref(),
                                                                                                attention_mask.as_ref(),
                                                                                                decoder_input_ids.as_ref(),
@@ -708,6 +714,6 @@ impl MutableLMHeadModel for BartForConditionalGeneration {
                                                                                                train);
 
         let lm_logits = decoder_output.linear::<Tensor>(&self.base_model.embeddings.ws, None);
-        Ok((lm_logits, Some(encoder_hidden_states), None, None, None))
+        Ok((lm_logits, Some(encoder_hidden_states), (None, None, None), None, None))
     }
 }
